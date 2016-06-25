@@ -154,7 +154,7 @@ namespace TestCaseGenerator
 			if (RandomBool(0.9))
 				EmitBinaryIntegerOperation(st);
 			else
-				EmitInteger(st);
+				EmitInteger(st, allowConstants: true);
 			processor.Emit(OpCodes.Box, tr);
 		}
 		
@@ -164,21 +164,21 @@ namespace TestCaseGenerator
 			if (what < 0.9) {
 				EmitBinaryIntegerOperation(st);
 			} else if (what < 0.95) {
-				EmitUnaryIntegerOperation(st);
+				EmitUnaryIntegerOperation(st, allowConstants: true);
 			} else {
-				EmitNullaryIntegerOperation(st);
+				EmitNullaryIntegerOperation(st, allowConstants: true);
 			}
 		}
 		
-		static void EmitInteger(StackType st)
+		static void EmitInteger(StackType st, bool allowConstants)
 		{
 			double what = random.NextDouble();
 			if (what < 0.3) {
 				EmitBinaryIntegerOperation(st);
 			} else if (what < 0.6) {
-				EmitUnaryIntegerOperation(st);
+				EmitUnaryIntegerOperation(st, allowConstants);
 			} else {
-				EmitNullaryIntegerOperation(st);
+				EmitNullaryIntegerOperation(st, allowConstants);
 			}
 		}
 
@@ -208,17 +208,18 @@ namespace TestCaseGenerator
 					sourceType = StackType.I8;
 				else if (RandomBool(0.1))
 					sourceType = StackType.I;
-				EmitInteger(sourceType);
-				EmitInteger(sourceType);
+				EmitInteger(sourceType, allowConstants: true);
+				EmitInteger(sourceType, allowConstants: true);
 				processor.Emit(RandomElement(comparisonOpCodes));
 			} else {
 				var opCode = RandomElement(binaryIntegerOpCodes);
-				EmitInteger(st);
+				bool constantAllowedOnLeft = RandomBool(0.5);
+				EmitInteger(st, constantAllowedOnLeft);
 				if (opCode == OpCodes.Shl || opCode == OpCodes.Shr || opCode == OpCodes.Shr_Un) {
 					// these don't support I8 on the RHS
-					EmitInteger(RandomBool(0.75) ? StackType.I4 : StackType.I);
+					EmitInteger(RandomBool(0.75) ? StackType.I4 : StackType.I, !constantAllowedOnLeft);
 				} else {
-					EmitInteger(st);
+					EmitInteger(st, !constantAllowedOnLeft);
 				}
 				processor.Emit(opCode);
 			}
@@ -249,7 +250,26 @@ namespace TestCaseGenerator
 			OpCodes.Conv_Ovf_I8_Un, OpCodes.Conv_Ovf_U8_Un,
 		};
 		
-		static void EmitUnaryIntegerOperation(StackType targetType)
+		static bool ConvOpCodeHasOverflowCheck(OpCode opCode)
+		{
+			switch (opCode.Code) {
+				case Code.Conv_I1:
+				case Code.Conv_U1:
+				case Code.Conv_I2:
+				case Code.Conv_U2:
+				case Code.Conv_I4:
+				case Code.Conv_U4:
+				case Code.Conv_I:
+				case Code.Conv_U:
+				case Code.Conv_I8:
+				case Code.Conv_U8:
+					return false;
+				default:
+					return true;
+			}
+		}
+		
+		static void EmitUnaryIntegerOperation(StackType targetType, bool allowConstants)
 		{
 			double what = random.NextDouble();
 			if (what < 0.75) {
@@ -259,22 +279,24 @@ namespace TestCaseGenerator
 					sourceType = StackType.I;
 				else if (what < 0.2)
 					sourceType = StackType.I8;
-				EmitInteger(sourceType);
+				OpCode convOpCode;
 				switch (targetType) {
 					case StackType.I4:
-						processor.Emit(RandomElement(convToI4));
+						convOpCode = RandomElement(convToI4);
 						break;
 					case StackType.I:
-						processor.Emit(RandomElement(convToI));
+						convOpCode = RandomElement(convToI);
 						break;
 					case StackType.I8:
-						processor.Emit(RandomElement(convToI8));
+						convOpCode = RandomElement(convToI8);
 						break;
 					default:
 						throw new ArgumentOutOfRangeException();
 				}
+				EmitInteger(sourceType, allowConstants && !ConvOpCodeHasOverflowCheck(convOpCode));
+				processor.Emit(convOpCode);
 			} else {
-				EmitInteger(targetType);
+				EmitInteger(targetType, allowConstants);
 				processor.Emit(RandomElement(unaryIntegerOpCodes));
 			}
 		}
@@ -288,9 +310,9 @@ namespace TestCaseGenerator
 			int.MinValue, int.MaxValue,
 		};
 		
-		static void EmitNullaryIntegerOperation(StackType st)
+		static void EmitNullaryIntegerOperation(StackType st, bool allowConstants)
 		{
-			if (RandomBool(0.5)) {
+			if (!allowConstants || RandomBool(0.5)) {
 				// declare a parameter instead of using a constant
 				method.Parameters.Add(new ParameterDefinition(RandomType(st)));
 				parameterStackTypes.Add(st);
@@ -323,7 +345,7 @@ namespace TestCaseGenerator
 					else if (RandomBool(0.2))
 						processor.Emit(OpCodes.Ldc_I8, RandomBool(0.5) ? long.MaxValue : long.MinValue);
 					else
-						processor.Emit(OpCodes.Ldc_I8, (long)random.Next() << 32 | random.Next());
+						processor.Emit(OpCodes.Ldc_I8, (long)random.Next() << 32 | (uint)random.Next());
 					break;
 				default:
 					throw new ArgumentOutOfRangeException();
