@@ -62,7 +62,7 @@ namespace TestCaseGenerator
 		
 		public static void Main(string[] args)
 		{
-			module = ModuleDefinition.CreateModule("TestCase", ModuleKind.Console);
+			module = ModuleDefinition.CreateModule("TestCase-1", ModuleKind.Console);
 			
 			foreach (var type in csharpIntegerTypes) {
 				var enumDefinition = new TypeDefinition("Enums", type.Name, TypeAttributes.Public | TypeAttributes.Sealed);
@@ -94,7 +94,7 @@ namespace TestCaseGenerator
 			
 			mainProcessor.Emit(OpCodes.Ret);
 			module.EntryPoint = main;
-			module.Write("TestCase.exe");
+			module.Write($"../../../TestCases/{module.Name}.exe");
 		}
 		
 		static bool RandomBool(double pTrue)
@@ -296,8 +296,9 @@ namespace TestCaseGenerator
 				EmitInteger(sourceType, allowConstants && !ConvOpCodeHasOverflowCheck(convOpCode));
 				processor.Emit(convOpCode);
 			} else {
-				EmitInteger(targetType, allowConstants);
-				processor.Emit(RandomElement(unaryIntegerOpCodes));
+				var opCode = RandomElement(unaryIntegerOpCodes);
+				EmitInteger(targetType, allowConstants && opCode != OpCodes.Neg);
+				processor.Emit(opCode);
 			}
 		}
 		
