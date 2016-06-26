@@ -355,30 +355,40 @@ namespace TestCaseGenerator
 
 		static void EmitCallsInMain()
 		{
-			var writeLine = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(object) }));
-			processor.Body.InitLocals = true;
-			processor.Body.Variables.Add(new VariableDefinition(module.TypeSystem.Object));
-			var v = processor.Body.Variables.Last();
-			processor.Emit(OpCodes.Ldstr, method.Name);
-			processor.Emit(OpCodes.Call, writeLine);
+			var writeLineObject = module.ImportReference(typeof(Console).GetMethod(
+				"WriteLine", new[] { typeof(object) }));
+			var writeLineFormatTwoArgs = module.ImportReference(typeof(Console).GetMethod(
+				"WriteLine", new[] { typeof(string), typeof(object), typeof(object) }));
+			processor.Emit(OpCodes.Ldstr, "");
+			processor.Emit(OpCodes.Call, writeLineObject);
+			processor.Emit(OpCodes.Ldstr, method.Name + ":");
+			processor.Emit(OpCodes.Call, writeLineObject);
 			for (int i = 0; i < 10; i++) {
 				var nop = processor.Create(OpCodes.Nop);
 				int startTry = processor.Body.Instructions.Count;
-				foreach (var st in parameterStackTypes) {
-					EmitConstantInteger(st);
+				processor.Emit(OpCodes.Ldstr, method.Name + " call #" + i + ": {0} as {1}");
+				for (int j = 0; j < method.Parameters.Count; j++) {
+					if (method.Parameters[j].ParameterType.Name == "Boolean") {
+						processor.Emit(RandomBool(0.5) ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+					} else {
+						EmitConstantInteger(parameterStackTypes[j]);
+					}
 				}
 				processor.Emit(OpCodes.Call, method);
-				processor.Emit(OpCodes.Stloc, v);
-				processor.Emit(OpCodes.Leave, nop);
-				int endTry = processor.Body.Instructions.Count;
+				processor.Emit(OpCodes.Dup);
 				processor.Emit(OpCodes.Callvirt, module.ImportReference(typeof(object).GetMethod("GetType")));
 				processor.Emit(OpCodes.Callvirt, module.ImportReference(typeof(Type).GetProperty("Name").GetGetMethod()));
-				processor.Emit(OpCodes.Stloc, v);
+				processor.Emit(OpCodes.Call, writeLineFormatTwoArgs);
+				processor.Emit(OpCodes.Leave, nop);
+				int endTry = processor.Body.Instructions.Count;
+				
+				int startCatch = processor.Body.Instructions.Count;
+				processor.Emit(OpCodes.Callvirt, module.ImportReference(typeof(object).GetMethod("GetType")));
+				processor.Emit(OpCodes.Callvirt, module.ImportReference(typeof(Type).GetProperty("Name").GetGetMethod()));
+				processor.Emit(OpCodes.Call, writeLineObject);
 				processor.Emit(OpCodes.Leave, nop);
 				int endCatch = processor.Body.Instructions.Count;
 				processor.Append(nop);
-				processor.Emit(OpCodes.Ldloc, v);
-				processor.Emit(OpCodes.Call, writeLine);
 				processor.Body.ExceptionHandlers.Add(
 					new ExceptionHandler(ExceptionHandlerType.Catch) {
 						CatchType = module.ImportReference(typeof(Exception)),
