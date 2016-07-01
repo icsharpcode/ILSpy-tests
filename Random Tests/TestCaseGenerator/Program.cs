@@ -56,16 +56,17 @@ namespace TestCaseGenerator
 			typeof(UIntPtr),
 			typeof(long),
 			typeof(ulong),
+			typeof(void*),
 		};
 		
 		static readonly List<TypeDefinition> enumTypes = new List<TypeDefinition>();
 		
 		public static void Main(string[] args)
 		{
-			module = ModuleDefinition.CreateModule("TestCase-1", ModuleKind.Console);
+			module = ModuleDefinition.CreateModule("ImplicitConversions", ModuleKind.Console);
 			
 			foreach (var type in csharpIntegerTypes) {
-				var enumDefinition = new TypeDefinition("Enums", type.Name, TypeAttributes.Public | TypeAttributes.Sealed);
+				var enumDefinition = new TypeDefinition("Enums", "E" + type.Name, TypeAttributes.Public | TypeAttributes.Sealed);
 				enumDefinition.BaseType = module.ImportReference(typeof(Enum));
 				enumDefinition.Fields.Add(new FieldDefinition("__value", FieldAttributes.Public | FieldAttributes.SpecialName, module.ImportReference(type)));
 				enumTypes.Add(enumDefinition);
@@ -80,6 +81,83 @@ namespace TestCaseGenerator
 			var mainProcessor = main.Body.GetILProcessor();
 			typeDefinition.Methods.Add(main);
 			
+			GenerateImplicitConversions(typeDefinition, mainProcessor);
+			
+			mainProcessor.Emit(OpCodes.Ret);
+			module.EntryPoint = main;
+			module.Write($"../../../TestCases/{module.Name}.exe");
+		}
+		
+		static void GenerateImplicitConversions(TypeDefinition typeDefinition, ILProcessor mainProcessor)
+		{
+			var writeLineObject = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(object) }));
+			var writeLineI4 = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(int) }));
+			var writeLineI8 = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(long) }));
+			var allTypes = integerTypes.Select(t => module.ImportReference(t)).Concat(enumTypes).ToList();
+			foreach (var sourceType in allTypes) {
+				foreach (var targetType in allTypes) {
+					if (GetStackType(sourceType) != GetStackType(targetType) && !(GetStackType(sourceType) == StackType.I4 && GetStackType(targetType) == StackType.I))
+						continue;
+					method = new MethodDefinition("C_" + sourceType.Name + "_" + targetType.Name, MethodAttributes.Public | MethodAttributes.Static, targetType);
+					method.Parameters.Add(new ParameterDefinition(sourceType));
+					processor = method.Body.GetILProcessor();
+					processor.Emit(OpCodes.Ldarg_0);
+					processor.Emit(OpCodes.Ret);
+					
+					mainProcessor.Emit(OpCodes.Ldstr, "");
+					mainProcessor.Emit(OpCodes.Call, writeLineObject);
+					mainProcessor.Emit(OpCodes.Ldstr, method.Name + ":");
+					mainProcessor.Emit(OpCodes.Call, writeLineObject);
+					foreach (var val in LoadCommonValues(sourceType)) {
+						val(mainProcessor);
+						mainProcessor.Emit(OpCodes.Call, method);
+						switch (GetStackType(targetType)) {
+							case StackType.I4:
+								mainProcessor.Emit(OpCodes.Call, writeLineI4);
+								break;
+							case StackType.I:
+								mainProcessor.Emit(OpCodes.Conv_I8);
+								mainProcessor.Emit(OpCodes.Call, writeLineI8);
+								break;
+							case StackType.I8:
+								mainProcessor.Emit(OpCodes.Call, writeLineI8);
+								break;
+						}
+					}
+					
+					typeDefinition.Methods.Add(method);
+				}
+			}
+		}
+
+		static IEnumerable<Action<ILProcessor>> LoadCommonValues(TypeReference type)
+		{
+			IEnumerable<Action<ILProcessor>> values;
+			if (type.Name == "Boolean") {
+				values = new Action<ILProcessor>[] {
+					p => p.Emit(OpCodes.Ldc_I4_0),
+					p => p.Emit(OpCodes.Ldc_I4_1),
+				};
+			} else {
+				values = commonIntegers.Select(i => new Action<ILProcessor>(p => p.Emit(OpCodes.Ldc_I4, i)));
+				if (GetStackType(type) != StackType.I4) {
+					var i8Loads = new Action<ILProcessor>[] {
+						p => p.Emit(OpCodes.Ldc_I8, long.MinValue),
+						p => p.Emit(OpCodes.Ldc_I8, long.MaxValue),
+						p => p.Emit(OpCodes.Ldc_I8, unchecked((long)ulong.MaxValue)),
+					};
+					if (GetStackType(type) == StackType.I) {
+						values = values.Concat(i8Loads.Select(l => l + (p => p.Emit(OpCodes.Conv_I))));
+					} else {
+						values = values.Select(l => l + (p => p.Emit(OpCodes.Conv_I8))).Concat(i8Loads);
+					}
+				}
+			}
+			return values;
+		}
+		
+		static void GenerateRandomOps(TypeDefinition typeDefinition, ILProcessor mainProcessor)
+		{
 			for (int i = 0; i < 100; i++) {
 				method = new MethodDefinition("M" + i, MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Object);
 				parameterStackTypes = new List<StackType>();
@@ -88,13 +166,9 @@ namespace TestCaseGenerator
 				processor.Emit(OpCodes.Ret);
 				
 				processor = mainProcessor;
-				EmitCallsInMain();
+				EmitSampledCallsInMain();
 				typeDefinition.Methods.Add(method);
 			}
-			
-			mainProcessor.Emit(OpCodes.Ret);
-			module.EntryPoint = main;
-			module.Write($"../../../TestCases/{module.Name}.exe");
 		}
 		
 		static bool RandomBool(double pTrue)
@@ -107,50 +181,53 @@ namespace TestCaseGenerator
 			return inputs[random.Next(inputs.Count)];
 		}
 		
-		enum StackType {
+		enum StackType
+		{
 			I4,
 			I,
 			I8,
 		}
 		
-		static TypeReference RandomType(out StackType st)
+		static TypeReference RandomType()
 		{
 			if (RandomBool(0.3)) {
-				int index = random.Next(enumTypes.Count);
-				TypeDefinition td = RandomElement(enumTypes);
-				if (td.Name == "Int64" || td.Name == "UInt64") {
-					st = StackType.I8;
-				} else {
-					st = StackType.I4;
-				}
-				return td;
+				return RandomElement(enumTypes);
 			} else {
-				Type type = RandomElement(integerTypes);
-				if (type == typeof(IntPtr) || type == typeof(UIntPtr)) {
-					st = StackType.I;
-				} else if (type == typeof(long) || type == typeof(ulong)) {
-					st = StackType.I8;
-				} else {
-					st = StackType.I4;
-				}
-				return module.ImportReference(type);
+				return module.ImportReference(RandomElement(integerTypes));
+			}
+		}
+		
+		static StackType GetStackType(TypeReference tr)
+		{
+			if (tr.IsPointer)
+				return StackType.I;
+			switch (tr.Name) {
+				case "IntPtr":
+				case "UIntPtr":
+					return StackType.I;
+				case "EInt64":
+				case "EUInt64":
+				case "Int64":
+				case "UInt64":
+					return StackType.I8;
+				default:
+					return StackType.I4;
 			}
 		}
 		
 		static TypeReference RandomType(StackType expectedType)
 		{
-			StackType st;
 			TypeReference tr;
 			do {
-				tr = RandomType(out st);
-			} while (st != expectedType);
+				tr = RandomType();
+			} while (GetStackType(tr) != expectedType);
 			return tr;
 		}
 		
 		static void EmitObject()
 		{
-			StackType st;
-			var tr = RandomType(out st);
+			var tr = RandomType();
+			var st = GetStackType(tr);
 			if (RandomBool(0.9))
 				EmitBinaryIntegerOperation(st);
 			else
@@ -353,7 +430,7 @@ namespace TestCaseGenerator
 			}
 		}
 
-		static void EmitCallsInMain()
+		static void EmitSampledCallsInMain()
 		{
 			var writeLineObject = module.ImportReference(typeof(Console).GetMethod(
 				"WriteLine", new[] { typeof(object) }));
