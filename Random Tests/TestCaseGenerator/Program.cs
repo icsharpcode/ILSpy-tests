@@ -91,6 +91,7 @@ namespace TestCaseGenerator
 		static void GenerateImplicitConversions(TypeDefinition typeDefinition, ILProcessor mainProcessor)
 		{
 			var writeLineObject = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(object) }));
+			var writeLineBool = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(bool) }));
 			var writeLineI4 = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(int) }));
 			var writeLineI8 = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(long) }));
 			var allTypes = integerTypes.Select(t => module.ImportReference(t)).Concat(enumTypes).ToList();
@@ -98,34 +99,42 @@ namespace TestCaseGenerator
 				foreach (var targetType in allTypes) {
 					if (GetStackType(sourceType) != GetStackType(targetType) && !(GetStackType(sourceType) == StackType.I4 && GetStackType(targetType) == StackType.I))
 						continue;
-					method = new MethodDefinition("C_" + sourceType.Name + "_" + targetType.Name, MethodAttributes.Public | MethodAttributes.Static, targetType);
+					method = new MethodDefinition(sourceType.Name + "_" + targetType.Name, MethodAttributes.Public | MethodAttributes.Static, targetType);
 					method.Parameters.Add(new ParameterDefinition(sourceType));
 					processor = method.Body.GetILProcessor();
 					processor.Emit(OpCodes.Ldarg_0);
 					processor.Emit(OpCodes.Ret);
 					
-					mainProcessor.Emit(OpCodes.Ldstr, "");
-					mainProcessor.Emit(OpCodes.Call, writeLineObject);
-					mainProcessor.Emit(OpCodes.Ldstr, method.Name + ":");
-					mainProcessor.Emit(OpCodes.Call, writeLineObject);
+					var callMethod = new MethodDefinition(method.Name + "_Test", MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
+					processor = callMethod.Body.GetILProcessor();
+					processor.Emit(OpCodes.Ldstr, "");
+					processor.Emit(OpCodes.Call, writeLineObject);
+					processor.Emit(OpCodes.Ldstr, method.Name + ":");
+					processor.Emit(OpCodes.Call, writeLineObject);
 					foreach (var val in LoadCommonValues(sourceType)) {
-						val(mainProcessor);
-						mainProcessor.Emit(OpCodes.Call, method);
+						val(processor);
+						processor.Emit(OpCodes.Call, method);
 						switch (GetStackType(targetType)) {
 							case StackType.I4:
-								mainProcessor.Emit(OpCodes.Call, writeLineI4);
+								if (targetType.Name == "Boolean")
+									processor.Emit(OpCodes.Call, writeLineBool);
+								else
+									processor.Emit(OpCodes.Call, writeLineI4);
 								break;
 							case StackType.I:
-								mainProcessor.Emit(OpCodes.Conv_I8);
-								mainProcessor.Emit(OpCodes.Call, writeLineI8);
+								processor.Emit(OpCodes.Conv_I8);
+								processor.Emit(OpCodes.Call, writeLineI8);
 								break;
 							case StackType.I8:
-								mainProcessor.Emit(OpCodes.Call, writeLineI8);
+								processor.Emit(OpCodes.Call, writeLineI8);
 								break;
 						}
 					}
+					processor.Emit(OpCodes.Ret);
 					
+					typeDefinition.Methods.Add(callMethod);
 					typeDefinition.Methods.Add(method);
+					mainProcessor.Emit(OpCodes.Call, callMethod);
 				}
 			}
 		}
@@ -386,6 +395,7 @@ namespace TestCaseGenerator
 			short.MinValue, short.MaxValue,
 			ushort.MaxValue,
 			int.MinValue, int.MaxValue,
+			unchecked((int)uint.MaxValue)
 		};
 		
 		static void EmitNullaryIntegerOperation(StackType st, bool allowConstants)
