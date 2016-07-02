@@ -63,7 +63,7 @@ namespace TestCaseGenerator
 		
 		public static void Main(string[] args)
 		{
-			module = ModuleDefinition.CreateModule("ImplicitConversions", ModuleKind.Console);
+			module = ModuleDefinition.CreateModule("ExplicitConversions", ModuleKind.Console);
 			
 			foreach (var type in csharpIntegerTypes) {
 				var enumDefinition = new TypeDefinition("Enums", "E" + type.Name, TypeAttributes.Public | TypeAttributes.Sealed);
@@ -81,10 +81,15 @@ namespace TestCaseGenerator
 			var mainProcessor = main.Body.GetILProcessor();
 			typeDefinition.Methods.Add(main);
 			
-			GenerateImplicitConversions(typeDefinition, mainProcessor);
+			//GenerateImplicitConversions(typeDefinition, mainProcessor);
+			GenerateExplicitConversions(typeDefinition, mainProcessor);
 			
 			mainProcessor.Emit(OpCodes.Ret);
 			module.EntryPoint = main;
+			module.Write($"../../../TestCases/{module.Name}.exe");
+			module.Attributes |= ModuleAttributes.Required32Bit;
+			module.Name += "_32";
+			module.Assembly.Name.Name = module.Name;
 			module.Write($"../../../TestCases/{module.Name}.exe");
 		}
 		
@@ -105,40 +110,108 @@ namespace TestCaseGenerator
 					processor.Emit(OpCodes.Ldarg_0);
 					processor.Emit(OpCodes.Ret);
 					
-					var callMethod = new MethodDefinition(method.Name + "_Test", MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
-					processor = callMethod.Body.GetILProcessor();
-					processor.Emit(OpCodes.Ldstr, "");
-					processor.Emit(OpCodes.Call, writeLineObject);
-					processor.Emit(OpCodes.Ldstr, method.Name + ":");
-					processor.Emit(OpCodes.Call, writeLineObject);
-					foreach (var val in LoadCommonValues(sourceType)) {
-						val(processor);
-						processor.Emit(OpCodes.Call, method);
-						switch (GetStackType(targetType)) {
-							case StackType.I4:
-								if (targetType.Name == "Boolean")
-									processor.Emit(OpCodes.Call, writeLineBool);
-								else
-									processor.Emit(OpCodes.Call, writeLineI4);
-								break;
-							case StackType.I:
-								processor.Emit(OpCodes.Conv_I8);
-								processor.Emit(OpCodes.Call, writeLineI8);
-								break;
-							case StackType.I8:
-								processor.Emit(OpCodes.Call, writeLineI8);
-								break;
-						}
-					}
-					processor.Emit(OpCodes.Ret);
+					var testMethod = CreateTestMethodForUnaryMethod(method);
 					
-					typeDefinition.Methods.Add(callMethod);
+					typeDefinition.Methods.Add(testMethod);
 					typeDefinition.Methods.Add(method);
-					mainProcessor.Emit(OpCodes.Call, callMethod);
+					mainProcessor.Emit(OpCodes.Call, testMethod);
 				}
 			}
 		}
 
+		static void GenerateExplicitConversions(TypeDefinition typeDefinition, ILProcessor mainProcessor)
+		{
+			var allTypes = integerTypes.Select(t => module.ImportReference(t)).Concat(enumTypes).ToList();
+			foreach (var targetType in allTypes) {
+				OpCode[] applicableConversions;
+				switch (GetStackType(targetType)) {
+					case StackType.I8:
+						applicableConversions = convToI8;
+						break;
+					case StackType.I4:
+						applicableConversions = convToI4;
+						break;
+					case StackType.I:
+						applicableConversions = convToI4.Concat(convToI).ToArray();
+						break;
+					default:
+						throw new NotImplementedException();
+				}
+				foreach (var conv in applicableConversions) {
+					foreach (var sourceType in allTypes) {
+						method = new MethodDefinition(sourceType.Name + "_" + conv.Code + "_" + targetType.Name, MethodAttributes.Public | MethodAttributes.Static, targetType);
+						method.Parameters.Add(new ParameterDefinition(sourceType));
+						processor = method.Body.GetILProcessor();
+						processor.Emit(OpCodes.Ldarg_0);
+						processor.Emit(conv);
+						processor.Emit(OpCodes.Ret);
+						
+						var testMethod = CreateTestMethodForUnaryMethod(method);
+						typeDefinition.Methods.Add(testMethod);
+						typeDefinition.Methods.Add(method);
+						mainProcessor.Emit(OpCodes.Call, testMethod);
+					}
+				}
+			}
+		}
+		
+		static MethodDefinition CreateTestMethodForUnaryMethod(MethodDefinition unaryMethod)
+		{
+			var writeLineObject = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(object) }));
+			var writeLineBool = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(bool) }));
+			var writeLineI4 = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(int) }));
+			var writeLineI8 = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(long) }));
+			
+			var testMethod = new MethodDefinition(unaryMethod.Name + "_Test", MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
+			var processor = testMethod.Body.GetILProcessor();
+			processor.Emit(OpCodes.Ldstr, "");
+			processor.Emit(OpCodes.Call, writeLineObject);
+			processor.Emit(OpCodes.Ldstr, method.Name + ":");
+			processor.Emit(OpCodes.Call, writeLineObject);
+			foreach (var val in LoadCommonValues(unaryMethod.Parameters[0].ParameterType)) {
+				var nop = processor.Create(OpCodes.Nop);
+				
+				int startTry = processor.Body.Instructions.Count;
+				val(processor);
+				processor.Emit(OpCodes.Call, method);
+				switch (GetStackType(unaryMethod.ReturnType)) {
+					case StackType.I4:
+						if (unaryMethod.ReturnType.Name == "Boolean")
+							processor.Emit(OpCodes.Call, writeLineBool);
+						else
+							processor.Emit(OpCodes.Call, writeLineI4);
+						break;
+					case StackType.I:
+						processor.Emit(OpCodes.Conv_I8);
+						processor.Emit(OpCodes.Call, writeLineI8);
+						break;
+					case StackType.I8:
+						processor.Emit(OpCodes.Call, writeLineI8);
+						break;
+				}
+				processor.Emit(OpCodes.Leave, nop);
+				int endTry = processor.Body.Instructions.Count;
+				
+				int startCatch = processor.Body.Instructions.Count;
+				processor.Emit(OpCodes.Callvirt, module.ImportReference(typeof(object).GetMethod("GetType")));
+				processor.Emit(OpCodes.Callvirt, module.ImportReference(typeof(Type).GetProperty("Name").GetGetMethod()));
+				processor.Emit(OpCodes.Call, writeLineObject);
+				processor.Emit(OpCodes.Leave, nop);
+				int endCatch = processor.Body.Instructions.Count;
+				processor.Append(nop);
+				processor.Body.ExceptionHandlers.Add(
+					new ExceptionHandler(ExceptionHandlerType.Catch) {
+						CatchType = module.ImportReference(typeof(Exception)),
+						TryStart = processor.Body.Instructions[startTry],
+						TryEnd = processor.Body.Instructions[endTry],
+						HandlerStart = processor.Body.Instructions[startCatch],
+						HandlerEnd = processor.Body.Instructions[endCatch]
+					});
+			}
+			processor.Emit(OpCodes.Ret);
+			return testMethod;
+		}
+		
 		static IEnumerable<Action<ILProcessor>> LoadCommonValues(TypeReference type)
 		{
 			IEnumerable<Action<ILProcessor>> values;
@@ -481,7 +554,7 @@ namespace TestCaseGenerator
 						CatchType = module.ImportReference(typeof(Exception)),
 						TryStart = processor.Body.Instructions[startTry],
 						TryEnd = processor.Body.Instructions[endTry],
-						HandlerStart = processor.Body.Instructions[endTry],
+						HandlerStart = processor.Body.Instructions[startCatch],
 						HandlerEnd = processor.Body.Instructions[endCatch]
 					});
 				if (method.Parameters.Count == 0)
