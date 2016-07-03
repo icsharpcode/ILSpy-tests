@@ -26,9 +26,11 @@ namespace TestCaseGenerator
 {
 	class Program
 	{
+		const TypeAttributes staticClass = TypeAttributes.Abstract | TypeAttributes.Sealed;
 		static Random random = new Random(0);
 		static MethodDefinition method;
 		static ModuleDefinition module;
+		static TypeDefinition mainClass;
 		static List<StackType> parameterStackTypes;
 		static ILProcessor processor;
 		
@@ -44,7 +46,6 @@ namespace TestCaseGenerator
 		};
 		
 		static readonly Type[] integerTypes = {
-			typeof(bool),
 			typeof(sbyte),
 			typeof(byte),
 			typeof(short),
@@ -57,14 +58,53 @@ namespace TestCaseGenerator
 			typeof(long),
 			typeof(ulong),
 			typeof(void*),
+			typeof(bool),
 		};
 		
 		static readonly List<TypeDefinition> enumTypes = new List<TypeDefinition>();
 		
 		public static void Main(string[] args)
 		{
-			module = ModuleDefinition.CreateModule("ExplicitConversions", ModuleKind.Console);
+			CreateModule(
+				"ImplicitConversions", mainProcessor => GenerateImplicitConversions(mainClass, mainProcessor));
+			CreateModule(
+				"ImplicitConversions_32", mainProcessor => {
+					module.Attributes |= ModuleAttributes.Required32Bit;
+					GenerateImplicitConversions(mainClass, mainProcessor, (source, target) => GetStackType(source) == StackType.I || GetStackType(target) == StackType.I);
+				});
+			CreateModule(
+				"ExplicitConversions", mainProcessor => GenerateExplicitConversions(mainProcessor));
+			CreateModule(
+				"ExplicitConversions_32", mainProcessor => {
+					module.Attributes |= ModuleAttributes.Required32Bit;
+					GenerateExplicitConversions(mainProcessor, (source, op, target) => GetStackType(source) == StackType.I || GetStackType(target) == StackType.I);
+				});
+		}
+		
+		static void CreateModule(string name, Action<ILProcessor> action)
+		{
+			module = ModuleDefinition.CreateModule(name, ModuleKind.Console);
 			
+			CreateEnumTypes();
+			
+			mainClass = new TypeDefinition(string.Empty, "TestCases", TypeAttributes.Public | staticClass);
+			mainClass.BaseType = module.TypeSystem.Object;
+			module.Types.Add(mainClass);
+			
+			var main = new MethodDefinition("Main", MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
+			var mainProcessor = main.Body.GetILProcessor();
+			mainClass.Methods.Add(main);
+			
+			action(mainProcessor);
+			
+			mainProcessor.Emit(OpCodes.Ret);
+			module.EntryPoint = main;
+			module.Write($"../../../TestCases/{module.Name}.exe");
+		}
+
+		static void CreateEnumTypes()
+		{
+			enumTypes.Clear();
 			foreach (var type in csharpIntegerTypes) {
 				var enumDefinition = new TypeDefinition("Enums", "E" + type.Name, TypeAttributes.Public | TypeAttributes.Sealed);
 				enumDefinition.BaseType = module.ImportReference(typeof(Enum));
@@ -72,28 +112,9 @@ namespace TestCaseGenerator
 				enumTypes.Add(enumDefinition);
 				module.Types.Add(enumDefinition);
 			}
-			
-			var typeDefinition = new TypeDefinition(string.Empty, "TestCases", TypeAttributes.Public);
-			typeDefinition.BaseType = module.TypeSystem.Object;
-			module.Types.Add(typeDefinition);
-			
-			var main = new MethodDefinition("Main", MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
-			var mainProcessor = main.Body.GetILProcessor();
-			typeDefinition.Methods.Add(main);
-			
-			//GenerateImplicitConversions(typeDefinition, mainProcessor);
-			GenerateExplicitConversions(typeDefinition, mainProcessor);
-			
-			mainProcessor.Emit(OpCodes.Ret);
-			module.EntryPoint = main;
-			module.Write($"../../../TestCases/{module.Name}.exe");
-			module.Attributes |= ModuleAttributes.Required32Bit;
-			module.Name += "_32";
-			module.Assembly.Name.Name = module.Name;
-			module.Write($"../../../TestCases/{module.Name}.exe");
 		}
 		
-		static void GenerateImplicitConversions(TypeDefinition typeDefinition, ILProcessor mainProcessor)
+		static void GenerateImplicitConversions(TypeDefinition typeDefinition, ILProcessor mainProcessor, Func<TypeReference, TypeReference, bool> filter = null)
 		{
 			var writeLineObject = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(object) }));
 			var writeLineBool = module.ImportReference(typeof(Console).GetMethod("WriteLine", new[] { typeof(bool) }));
@@ -103,6 +124,8 @@ namespace TestCaseGenerator
 			foreach (var sourceType in allTypes) {
 				foreach (var targetType in allTypes) {
 					if (GetStackType(sourceType) != GetStackType(targetType) && !(GetStackType(sourceType) == StackType.I4 && GetStackType(targetType) == StackType.I))
+						continue;
+					if (filter != null && !filter(sourceType, targetType))
 						continue;
 					method = new MethodDefinition(sourceType.Name + "_" + targetType.Name, MethodAttributes.Public | MethodAttributes.Static, targetType);
 					method.Parameters.Add(new ParameterDefinition(sourceType));
@@ -119,7 +142,7 @@ namespace TestCaseGenerator
 			}
 		}
 
-		static void GenerateExplicitConversions(TypeDefinition typeDefinition, ILProcessor mainProcessor)
+		static void GenerateExplicitConversions(ILProcessor mainProcessor, Func<TypeReference, OpCode, TypeReference, bool> filter = null)
 		{
 			var allTypes = integerTypes.Select(t => module.ImportReference(t)).Concat(enumTypes).ToList();
 			foreach (var targetType in allTypes) {
@@ -138,7 +161,14 @@ namespace TestCaseGenerator
 						throw new NotImplementedException();
 				}
 				foreach (var conv in applicableConversions) {
+					var typeDefinition = module.Types.FirstOrDefault(t => t.Name == conv.Code.ToString());
+					if (typeDefinition == null) {
+						typeDefinition = new TypeDefinition(string.Empty, conv.Code.ToString(), TypeAttributes.Public | staticClass, module.TypeSystem.Object);
+						module.Types.Add(typeDefinition);
+					}
 					foreach (var sourceType in allTypes) {
+						if (filter != null && !filter(sourceType, conv, targetType))
+							continue;
 						method = new MethodDefinition(sourceType.Name + "_" + conv.Code + "_" + targetType.Name, MethodAttributes.Public | MethodAttributes.Static, targetType);
 						method.Parameters.Add(new ParameterDefinition(sourceType));
 						processor = method.Body.GetILProcessor();
