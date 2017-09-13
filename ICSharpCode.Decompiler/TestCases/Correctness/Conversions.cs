@@ -16,12 +16,12 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-// #include "../../../Util/CSharpPrimitiveCast.cs"
+// #include "../Util/CSharpPrimitiveCast.cs"
 
 using System;
 using ICSharpCode.Decompiler.Util;
 
-namespace ICSharpCode.Decompiler.Tests.TestCases
+namespace ICSharpCode.Decompiler.Tests.TestCases.Correctness
 {
 	public class Conversions
 	{

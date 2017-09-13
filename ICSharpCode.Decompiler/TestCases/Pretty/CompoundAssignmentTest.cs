@@ -73,13 +73,12 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 		
 		private int[,] Array()
 		{
-			return (int[,])null;
+			return null;
 		}
 		
 		private unsafe int* GetPointer()
 		{
-//			return null;
-			return (int*)0u;
+			return null;
 		}
 		
 		public int GetIndex()
@@ -95,6 +94,11 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 		public int GetValue(int value)
 		{
 			return value;
+		}
+
+		public bool IsUpperCaseA(char a)
+		{
+			return a == 'A';
 		}
 		
 		public void Int32_Local_Add(int i)

@@ -1,12 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace PropertiesAndEvents
+namespace ICSharpCode.Decompiler.Tests.TestCases.Correctness
 {
-	class Program
+	class PropertiesAndEvents
 	{
 		public static int Main(string[] args)
 		{
