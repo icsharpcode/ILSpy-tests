@@ -1,0 +1,11 @@
+<Project>
+  <!-- This repository is consumed as the 'ILSpy-tests' submodule of ILSpy, whose root
+       Directory.Build.props sets TreatWarningsAsErrors=true. The projects here are decompiler
+       test fixtures (decompiled output, round-trip recompilation targets) that intentionally
+       contain warning-generating code, so they must not be held to that bar. Presence of this
+       file also stops MSBuild's upward Directory.Build.props search at the submodule root, so the
+       host repo's build settings no longer leak in. -->
+  <PropertyGroup>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>
