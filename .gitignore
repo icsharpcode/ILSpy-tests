@@ -1,5 +1,7 @@
 *-decompiled
 *-output
+TestCases-output*
+TestCases-decompiled*
 obj
 bin
 !/mcs/*/bin/
